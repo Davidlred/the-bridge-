@@ -496,6 +496,8 @@ const App: React.FC = () => {
         }}
         onAddGoal={startNewGoal}
         onSignOut={handleSignOut}
+        installPrompt={deferredPrompt}
+        onInstall={handleInstallClick}
       />
     );
   }
