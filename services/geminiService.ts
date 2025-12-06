@@ -68,7 +68,9 @@ export const generatePlan = async (
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as PlanResponse;
+      // CLEAN THE RESPONSE: Remove markdown code blocks if the model adds them
+      const cleanJson = response.text.replace(/```json/g, "").replace(/```/g, "").trim();
+      return JSON.parse(cleanJson) as PlanResponse;
     }
     throw new Error("No text returned from Gemini");
   } catch (error) {

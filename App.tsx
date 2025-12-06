@@ -5,7 +5,7 @@ import Dashboard from './components/Dashboard';
 import GoalList from './components/GoalList';
 import { generatePlan, generateFutureSelf, generateCurrentRoutineImage } from './services/geminiService';
 import { authService } from './services/authService';
-import { Camera, ArrowRight, Loader2, Upload, Lock, User, Mail, ChevronRight, Bell, Download, Calendar } from 'lucide-react';
+import { Camera, ArrowRight, Loader2, Upload, Lock, User, Mail, ChevronRight, Bell, Download, Calendar, RefreshCcw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.AUTH);
@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [inputGoal, setInputGoal] = useState("");
   const [inputDate, setInputDate] = useState(""); // YYYY-MM-DD
   const [inputImage, setInputImage] = useState<string | null>(null);
+  const [processingError, setProcessingError] = useState<string | null>(null);
 
   // App State
   const [appState, setAppState] = useState<UserState>({
@@ -243,6 +244,7 @@ const App: React.FC = () => {
     if (!inputRoutine || !inputGoal || !inputDate) return;
 
     setStep(AppStep.PROCESSING);
+    setProcessingError(null);
     
     const targetTs = new Date(inputDate).getTime();
     const now = Date.now();
@@ -251,22 +253,19 @@ const App: React.FC = () => {
     try {
       setLoadingMsg("Analysing trajectories...");
       
-      // Parallel execution for plan and both images
+      // Parallel execution: Plan + Future Self + ONE Reality Check (5 Years)
       const planPromise = generatePlan(inputRoutine, inputGoal, 1, daysRemaining);
       
-      setLoadingMsg("Projecting futures (2Y, 5Y, 10Y)...");
+      setLoadingMsg("Generating time projections...");
       const futureImagePromise = generateFutureSelf(imgData, inputGoal);
       
-      const reality2Promise = generateCurrentRoutineImage(imgData, inputRoutine, 2);
-      const reality5Promise = generateCurrentRoutineImage(imgData, inputRoutine, 5);
-      const reality10Promise = generateCurrentRoutineImage(imgData, inputRoutine, 10);
+      // Generating just one "Reality Check" image (5 years stagnation) to save resources and prevent blank screen
+      const realityPromise = generateCurrentRoutineImage(imgData, inputRoutine, 5);
 
-      const [plan, futureImage, r2, r5, r10] = await Promise.all([
+      const [plan, futureImage, realityImage] = await Promise.all([
         planPromise,
         futureImagePromise,
-        reality2Promise,
-        reality5Promise,
-        reality10Promise
+        realityPromise
       ]);
 
       const newGoal: Goal = {
@@ -274,12 +273,7 @@ const App: React.FC = () => {
         title: inputGoal,
         routine: inputRoutine,
         futureSelfImageBase64: futureImage,
-        currentRoutineImageBase64: null, 
-        currentRoutineImages: {
-          year2: r2,
-          year5: r5,
-          year10: r10
-        },
+        currentRoutineImageBase64: realityImage, 
         tasks: plan.tasks.map(t => ({
           id: Math.random().toString(36).substr(2, 9),
           title: t.title,
@@ -306,10 +300,9 @@ const App: React.FC = () => {
       setActiveGoalId(newGoal.id);
       requestNotifications();
       setStep(AppStep.DASHBOARD);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("An error occurred interacting with the Bridge. Please try again.");
-      setStep(AppStep.ONBOARDING_DETAILS);
+      setProcessingError(error.message || "Processing failed. Please try again or use a smaller image.");
     }
   };
 
@@ -614,10 +607,28 @@ const App: React.FC = () => {
 
   if (step === AppStep.PROCESSING) {
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
-        <Loader2 size={64} className="animate-spin text-white mb-8" />
-        <h2 className="text-2xl font-black uppercase tracking-tighter animate-pulse">{loadingMsg}</h2>
-        <p className="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Do not close the bridge.</p>
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 text-center">
+        {processingError ? (
+          <div className="max-w-md animate-in fade-in zoom-in">
+            <h2 className="text-xl font-bold text-red-500 uppercase tracking-widest mb-4">Connection Failed</h2>
+            <p className="text-zinc-400 mb-6 text-sm">{processingError}</p>
+            <button 
+              onClick={() => {
+                setProcessingError(null);
+                setStep(AppStep.ONBOARDING_DETAILS);
+              }}
+              className="bg-white text-black px-6 py-3 rounded font-bold uppercase tracking-widest hover:bg-zinc-200 flex items-center gap-2 mx-auto"
+            >
+              <RefreshCcw size={16}/> Retry
+            </button>
+          </div>
+        ) : (
+          <>
+            <Loader2 size={64} className="animate-spin text-white mb-8" />
+            <h2 className="text-2xl font-black uppercase tracking-tighter animate-pulse">{loadingMsg}</h2>
+            <p className="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Do not close the bridge.</p>
+          </>
+        )}
       </div>
     );
   }
@@ -646,6 +657,12 @@ const App: React.FC = () => {
             </>
         );
     }
+    // Fallback while state is updating
+    return (
+        <div className="min-h-screen bg-black text-white flex items-center justify-center">
+             <Loader2 size={48} className="animate-spin text-white mb-4" />
+        </div>
+    );
   }
 
   return null;

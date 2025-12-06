@@ -18,12 +18,7 @@ export interface Goal {
   title: string;
   routine: string;
   futureSelfImageBase64: string | null;
-  currentRoutineImageBase64: string | null; // Deprecated
-  currentRoutineImages?: {
-    year2: string;
-    year5: string;
-    year10: string;
-  };
+  currentRoutineImageBase64: string | null;
   tasks: DailyTask[];
   journal: JournalEntry[];
   motivationalQuote: string;
