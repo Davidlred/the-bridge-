@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { PlanResponse } from "../types";
 
@@ -9,19 +10,30 @@ const cleanBase64 = (b64: string) => b64.replace(/^data:image\/\w+;base64,/, "")
 export const generatePlan = async (
   routine: string,
   goal: string,
-  dayContext: number = 1
+  dayContext: number = 1,
+  daysRemaining: number = 30
 ): Promise<PlanResponse> => {
   const model = "gemini-2.5-flash";
   
+  let urgency = "NORMAL";
+  if (daysRemaining < 7) urgency = "CRITICAL";
+  else if (daysRemaining < 30) urgency = "HIGH";
+
   const prompt = `
     Analyze the gap between the user's current routine and their goal.
     Current Routine: "${routine}"
     Goal: "${goal}"
-    Context: This is Day ${dayContext} of their journey.
+    Context: Day ${dayContext} of the journey.
+    Time Remaining: ${daysRemaining} days.
+    Urgency Level: ${urgency}.
     
-    Create a concrete, actionable daily to-do list (max 5 items) that bridges this gap for TODAY.
-    If the day count is high, increase difficulty slightly or focus on consistency.
-    Also provide a short, punchy, dark-themed motivational quote relevant to Day ${dayContext}.
+    Create a concrete, actionable daily to-do list (max 5 items) for TODAY.
+    
+    CRITICAL INSTRUCTION:
+    Since urgency is ${urgency}, adjust the intensity of the tasks.
+    ${urgency === 'CRITICAL' ? 'Tasks must be drastic and high-impact. No fluff.' : 'Focus on consistency and building momentum.'}
+    
+    Also provide a short, punchy, dark-themed motivational quote that references time running out or the cost of delay.
   `;
 
   const schema: Schema = {
@@ -51,7 +63,7 @@ export const generatePlan = async (
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        systemInstruction: "You are a ruthless but effective productivity coach. Be concise. High contrast.",
+        systemInstruction: "You are a ruthless productivity algorithm. You calculate the probability of failure based on time remaining.",
       },
     });
 
@@ -113,13 +125,14 @@ export const generateFutureSelf = async (
 
 export const generateCurrentRoutineImage = async (
   imageBase64: string,
-  routine: string
+  routine: string,
+  years: number = 5
 ): Promise<string> => {
   const model = "gemini-2.5-flash-image";
   const mimeType = imageBase64.match(/data:(.*?);base64/)?.[1] || "image/jpeg";
 
   const prompt = `
-    Show this person 5 years in the future if they rigidly stick to this current daily routine: "${routine}" without changing anything.
+    Show this person ${years} years in the future if they rigidly stick to this current daily routine: "${routine}" without changing anything.
     The style should be: High contrast, black and white, gritty, film noir.
     The person should look slightly weary, stagnant, stuck in a loop, unfulfilled, or bored.
     Keep facial features recognizable but reflect the lack of progress.

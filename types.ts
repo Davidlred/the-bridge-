@@ -1,3 +1,4 @@
+
 export interface DailyTask {
   id: string;
   title: string;
@@ -17,12 +18,19 @@ export interface Goal {
   title: string;
   routine: string;
   futureSelfImageBase64: string | null;
-  currentRoutineImageBase64: string | null; // The "Inertia" image
+  currentRoutineImageBase64: string | null; // Deprecated
+  currentRoutineImages?: {
+    year2: string;
+    year5: string;
+    year10: string;
+  };
   tasks: DailyTask[];
   journal: JournalEntry[];
   motivationalQuote: string;
   progress: number; // 0 to 100 (Daily Progress)
   streak: number; // Number of days completed
+  drift: number; // 0-100, deviation from the path
+  targetDate: number; // Timestamp of deadline
   lastGeneratedAt: number; // Timestamp of last task generation
   createdAt: number;
 }

@@ -1,14 +1,15 @@
 import React from 'react';
 import { Goal } from '../types';
-import { Plus, ChevronRight, Target, Clock } from 'lucide-react';
+import { Plus, ChevronRight, Target, Clock, LogOut } from 'lucide-react';
 
 interface GoalListProps {
   goals: Goal[];
   onSelectGoal: (id: string) => void;
   onAddGoal: () => void;
+  onSignOut: () => void;
 }
 
-const GoalList: React.FC<GoalListProps> = ({ goals, onSelectGoal, onAddGoal }) => {
+const GoalList: React.FC<GoalListProps> = ({ goals, onSelectGoal, onAddGoal, onSignOut }) => {
   return (
     <div className="min-h-screen bg-black text-white p-6 max-w-4xl mx-auto flex flex-col gap-8 animate-in fade-in duration-500">
       <header className="flex justify-between items-center border-b border-zinc-800 pb-6">
@@ -16,8 +17,16 @@ const GoalList: React.FC<GoalListProps> = ({ goals, onSelectGoal, onAddGoal }) =
           <h1 className="text-3xl font-black tracking-tighter uppercase mb-1">Command Center</h1>
           <p className="text-zinc-500 text-sm">Active Directives: {goals.length}</p>
         </div>
-        <div className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center border border-zinc-800">
-          <Target size={20} className="text-white" />
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={onSignOut}
+            className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-zinc-500 hover:text-red-500 transition-colors"
+          >
+            <LogOut size={16} /> Sign Out
+          </button>
+          <div className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center border border-zinc-800">
+            <Target size={20} className="text-white" />
+          </div>
         </div>
       </header>
 

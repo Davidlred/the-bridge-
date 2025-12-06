@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { DailyTask, Goal } from '../types';
 import Visualizer from './Visualizer';
@@ -5,7 +6,7 @@ import RealityCheck from './RealityCheck';
 import ProgressChart from './ProgressChart';
 import AIChat from './AIChat';
 import Journal from './Journal';
-import { CheckCircle2, Circle, Trophy, Share2, Plus, Edit2, Trash2, X, MessageSquare, Save, ChevronLeft, Flame, Clock, Book, AlertTriangle, Activity } from 'lucide-react';
+import { CheckCircle2, Circle, Trophy, Share2, Plus, Edit2, Trash2, X, MessageSquare, Save, ChevronLeft, Flame, Clock, Book, AlertTriangle, Activity, CalendarClock } from 'lucide-react';
 
 interface DashboardProps {
   goal: Goal;
@@ -34,35 +35,47 @@ const Dashboard: React.FC<DashboardProps> = ({ goal, onBack, onToggleTask, onAdd
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
 
-  // Timer State
-  const [timeLeft, setTimeLeft] = useState('');
+  // Timers State
+  const [refreshTimeLeft, setRefreshTimeLeft] = useState('');
+  const [deadlineTimeLeft, setDeadlineTimeLeft] = useState('');
+  const [daysRemaining, setDaysRemaining] = useState(0);
 
   useEffect(() => {
-    const updateTimer = () => {
+    const updateTimers = () => {
       const now = Date.now();
+      
+      // Daily Refresh Timer
       const nextRefresh = goal.lastGeneratedAt + (24 * 60 * 60 * 1000);
-      const diff = nextRefresh - now;
-
-      if (diff <= 0) {
-        setTimeLeft('00:00:00');
-        // Logic handled in App.tsx to actually trigger refresh
+      const refreshDiff = nextRefresh - now;
+      if (refreshDiff <= 0) {
+        setRefreshTimeLeft('00:00:00');
       } else {
-        const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
-        const minutes = Math.floor((diff / (1000 * 60)) % 60);
-        const seconds = Math.floor((diff / 1000) % 60);
-        setTimeLeft(
-          `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-        );
+        const h = Math.floor((refreshDiff / (1000 * 60 * 60)) % 24);
+        const m = Math.floor((refreshDiff / (1000 * 60)) % 60);
+        const s = Math.floor((refreshDiff / 1000) % 60);
+        setRefreshTimeLeft(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+      }
+
+      // Deadline Timer
+      const deadlineDiff = goal.targetDate - now;
+      const days = Math.floor(deadlineDiff / (1000 * 60 * 60 * 24));
+      setDaysRemaining(Math.max(0, days));
+      
+      if (deadlineDiff <= 0) {
+        setDeadlineTimeLeft("DEADLINE REACHED");
+      } else {
+         const h = Math.floor((deadlineDiff / (1000 * 60 * 60)) % 24);
+         setDeadlineTimeLeft(`${days}d ${h}h`);
       }
     };
 
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
+    updateTimers();
+    const interval = setInterval(updateTimers, 1000);
     return () => clearInterval(interval);
-  }, [goal.lastGeneratedAt]);
+  }, [goal.lastGeneratedAt, goal.targetDate]);
 
   const handleShare = async () => {
-    const text = `Day ${goal.streak + 1} on The Bridge. Working towards: ${goal.title}.`;
+    const text = `Day ${goal.streak + 1} on The Bridge. ${daysRemaining} days left to achieve: ${goal.title}. Trajectory: ${goal.drift < 20 ? 'OPTIMAL' : 'DRIFTING'}.`;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -114,11 +127,22 @@ const Dashboard: React.FC<DashboardProps> = ({ goal, onBack, onToggleTask, onAdd
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <h1 className="text-3xl font-black tracking-tighter uppercase mb-1 leading-none">{goal.title}</h1>
-            <div className="flex gap-4 items-center text-sm">
-                <p className="text-zinc-400">Daily Protocol: <span className="text-white font-bold">{Math.round(goal.progress)}%</span></p>
+            <div className="flex flex-wrap gap-4 items-center text-xs md:text-sm">
+                <div className="flex items-center gap-1 text-zinc-400">
+                    <CalendarClock size={14} className={daysRemaining < 7 ? "text-red-500" : "text-zinc-600"} />
+                    <span className={daysRemaining < 7 ? "text-red-500 font-bold" : "text-white font-bold"}>
+                        {deadlineTimeLeft} Remaining
+                    </span>
+                </div>
                 <div className="flex items-center gap-1 text-zinc-400">
                     <Flame size={14} className={goal.streak > 0 ? "text-orange-500" : "text-zinc-600"} />
                     <span className="text-white font-bold">{goal.streak} Day Streak</span>
+                </div>
+                <div className="flex items-center gap-1 text-zinc-400">
+                    <Activity size={14} className={goal.drift > 30 ? "text-red-500" : "text-green-500"} />
+                    <span className={goal.drift > 30 ? "text-red-500 font-bold" : "text-green-500 font-bold"}>
+                        {goal.drift}% Drift
+                    </span>
                 </div>
             </div>
           </div>
@@ -127,7 +151,7 @@ const Dashboard: React.FC<DashboardProps> = ({ goal, onBack, onToggleTask, onAdd
                 <span className="text-[10px] uppercase text-zinc-500 tracking-widest block">Next Directives In</span>
                 <div className="font-mono text-xl font-bold text-white flex items-center gap-2 justify-end">
                    <Clock size={16} className="text-zinc-500" />
-                   {timeLeft}
+                   {refreshTimeLeft}
                 </div>
              </div>
             <div className="flex gap-2">
@@ -181,7 +205,8 @@ const Dashboard: React.FC<DashboardProps> = ({ goal, onBack, onToggleTask, onAdd
                 <h2 className="text-sm font-bold uppercase tracking-widest text-zinc-500 mb-4">Proximity Sensor</h2>
                 <Visualizer 
                     progress={goal.progress} 
-                    futureSelfImage={goal.futureSelfImageBase64} 
+                    futureSelfImage={goal.futureSelfImageBase64}
+                    drift={goal.drift}
                 />
               </div>
               <ProgressChart tasks={goal.tasks} />

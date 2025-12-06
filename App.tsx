@@ -4,22 +4,27 @@ import { UserState, AppStep, DailyTask, Goal } from './types';
 import Dashboard from './components/Dashboard';
 import GoalList from './components/GoalList';
 import { generatePlan, generateFutureSelf, generateCurrentRoutineImage } from './services/geminiService';
-import { Camera, ArrowRight, Loader2, Upload, Lock, User, Mail, ChevronRight, Bell, Download } from 'lucide-react';
+import { authService } from './services/authService';
+import { Camera, ArrowRight, Loader2, Upload, Lock, User, Mail, ChevronRight, Bell, Download, Calendar } from 'lucide-react';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.AUTH);
   const [loadingMsg, setLoadingMsg] = useState<string>("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   
   // Auth Form
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   // App Data Inputs
   const [inputRoutine, setInputRoutine] = useState("");
   const [inputGoal, setInputGoal] = useState("");
+  const [inputDate, setInputDate] = useState(""); // YYYY-MM-DD
   const [inputImage, setInputImage] = useState<string | null>(null);
 
   // App State
@@ -29,6 +34,29 @@ const App: React.FC = () => {
   });
   
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
+
+  // 1. Check for active session on boot
+  useEffect(() => {
+    const savedUserEmail = authService.getCurrentUser();
+    if (savedUserEmail) {
+      setCurrentUserEmail(savedUserEmail);
+      const savedData = authService.loadUserData(savedUserEmail);
+      setAppState(savedData);
+      
+      if (savedData.goals.length > 0) {
+        setStep(AppStep.GOALS_LIST);
+      } else {
+        setStep(AppStep.ONBOARDING_DETAILS);
+      }
+    }
+  }, []);
+
+  // 2. Auto-save data when it changes (if logged in)
+  useEffect(() => {
+    if (currentUserEmail) {
+      authService.saveUserData(currentUserEmail, appState);
+    }
+  }, [appState, currentUserEmail]);
 
   // PWA Install Prompt
   useEffect(() => {
@@ -79,17 +107,31 @@ const App: React.FC = () => {
           if (timeSince > twentyFourHours) {
              setIsRefreshing(true);
              try {
-                // Calculate streak update
-                // If progress was > 80% yesterday, streak increases
-                const newStreak = goal.progress >= 80 ? goal.streak + 1 : 0;
+                // Calculate streak & Drift update
+                // If progress was > 80% yesterday, streak increases, drift decreases
+                // If progress was < 60%, streak resets, drift increases
                 
+                let newStreak = goal.streak;
+                let newDrift = goal.drift || 0;
+                
+                if (goal.progress >= 80) {
+                  newStreak += 1;
+                  newDrift = Math.max(0, newDrift - 10); // Correction
+                } else if (goal.progress < 60) {
+                  newStreak = 0;
+                  newDrift = Math.min(100, newDrift + 15); // Deviation
+                }
+                
+                const daysRemaining = Math.max(0, Math.ceil((goal.targetDate - now) / (1000 * 60 * 60 * 24)));
+
                 // Generate new tasks for the next day
-                const newPlan = await generatePlan(goal.routine, goal.title, newStreak + 1);
+                const newPlan = await generatePlan(goal.routine, goal.title, newStreak + 1, daysRemaining);
                 
                 const updatedGoal: Goal = {
                   ...goal,
                   lastGeneratedAt: now,
                   streak: newStreak,
+                  drift: newDrift,
                   progress: 0, // Reset progress for the new day
                   tasks: newPlan.tasks.map(t => ({
                     id: Math.random().toString(36).substr(2, 9),
@@ -135,21 +177,48 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email && password) {
-      // Mock Auth Success
-      if (appState.goals.length > 0) {
+    setAuthError('');
+    setIsAuthLoading(true);
+
+    try {
+      if (authMode === 'signup') {
+        await authService.signUp(email, password);
+        alert(`Access granted. A verification email has been sent to ${email}.`);
+      } else {
+        await authService.signIn(email, password);
+      }
+
+      setCurrentUserEmail(email);
+      // Load their data
+      const savedData = authService.loadUserData(email);
+      setAppState(savedData);
+
+      if (savedData.goals.length > 0) {
         setStep(AppStep.GOALS_LIST);
       } else {
         setStep(AppStep.ONBOARDING_DETAILS);
       }
+    } catch (err: any) {
+      setAuthError(err.message || 'Authentication failed');
+    } finally {
+      setIsAuthLoading(false);
     }
+  };
+
+  const handleSignOut = () => {
+    authService.signOut();
+    setCurrentUserEmail(null);
+    setAppState({ userImageBase64: null, goals: [] });
+    setEmail('');
+    setPassword('');
+    setStep(AppStep.AUTH);
   };
 
   const handleDetailsSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputRoutine && inputGoal) {
+    if (inputRoutine && inputGoal && inputDate) {
       // If user image is already set (from previous goals), skip image step
       if (appState.userImageBase64) {
         // Reuse existing image for generation
@@ -165,31 +234,39 @@ const App: React.FC = () => {
   const startNewGoal = () => {
     setInputGoal("");
     setInputRoutine("");
-    // Note: We don't clear inputImage if it exists in state, but we might want to let them change it?
-    // For now, we assume one identity (user face) for the account.
+    setInputDate("");
     setStep(AppStep.ONBOARDING_DETAILS);
   };
 
   // Separated process function to handle both immediate call and button click
   const handleProcess = async (imgData: string) => {
-    if (!inputRoutine || !inputGoal) return;
+    if (!inputRoutine || !inputGoal || !inputDate) return;
 
     setStep(AppStep.PROCESSING);
     
+    const targetTs = new Date(inputDate).getTime();
+    const now = Date.now();
+    const daysRemaining = Math.max(1, Math.ceil((targetTs - now) / (1000 * 60 * 60 * 24)));
+
     try {
       setLoadingMsg("Analysing trajectories...");
       
       // Parallel execution for plan and both images
-      const planPromise = generatePlan(inputRoutine, inputGoal, 1);
+      const planPromise = generatePlan(inputRoutine, inputGoal, 1, daysRemaining);
       
-      setLoadingMsg("Projecting futures...");
+      setLoadingMsg("Projecting futures (2Y, 5Y, 10Y)...");
       const futureImagePromise = generateFutureSelf(imgData, inputGoal);
-      const inertiaImagePromise = generateCurrentRoutineImage(imgData, inputRoutine);
+      
+      const reality2Promise = generateCurrentRoutineImage(imgData, inputRoutine, 2);
+      const reality5Promise = generateCurrentRoutineImage(imgData, inputRoutine, 5);
+      const reality10Promise = generateCurrentRoutineImage(imgData, inputRoutine, 10);
 
-      const [plan, futureImage, inertiaImage] = await Promise.all([
+      const [plan, futureImage, r2, r5, r10] = await Promise.all([
         planPromise,
         futureImagePromise,
-        inertiaImagePromise
+        reality2Promise,
+        reality5Promise,
+        reality10Promise
       ]);
 
       const newGoal: Goal = {
@@ -197,7 +274,12 @@ const App: React.FC = () => {
         title: inputGoal,
         routine: inputRoutine,
         futureSelfImageBase64: futureImage,
-        currentRoutineImageBase64: inertiaImage,
+        currentRoutineImageBase64: null, 
+        currentRoutineImages: {
+          year2: r2,
+          year5: r5,
+          year10: r10
+        },
         tasks: plan.tasks.map(t => ({
           id: Math.random().toString(36).substr(2, 9),
           title: t.title,
@@ -209,6 +291,8 @@ const App: React.FC = () => {
         motivationalQuote: plan.quote,
         progress: 0,
         streak: 0,
+        drift: 0,
+        targetDate: targetTs,
         lastGeneratedAt: Date.now(),
         createdAt: Date.now()
       };
@@ -338,6 +422,12 @@ const App: React.FC = () => {
           </div>
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
+             {authError && (
+               <div className="bg-red-900/20 border border-red-900 text-red-500 text-xs p-3 rounded text-center font-bold uppercase">
+                 {authError}
+               </div>
+             )}
+             
              <div className="space-y-2">
                <label className="text-xs uppercase font-bold text-zinc-500 ml-1">Email</label>
                <div className="relative">
@@ -368,15 +458,22 @@ const App: React.FC = () => {
                </div>
              </div>
 
-             <button type="submit" className="w-full bg-white text-black font-bold uppercase tracking-widest py-3 rounded-lg hover:bg-zinc-200 transition-colors mt-6 flex items-center justify-center gap-2 group">
-               {authMode === 'signin' ? 'Enter' : 'Initialize'}
-               <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+             <button 
+               type="submit" 
+               disabled={isAuthLoading}
+               className="w-full bg-white text-black font-bold uppercase tracking-widest py-3 rounded-lg hover:bg-zinc-200 transition-colors mt-6 flex items-center justify-center gap-2 group disabled:opacity-50"
+             >
+               {isAuthLoading ? <Loader2 className="animate-spin" size={16}/> : (authMode === 'signin' ? 'Enter' : 'Initialize')}
+               {!isAuthLoading && <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />}
              </button>
           </form>
 
           <div className="mt-6 text-center">
             <button 
-              onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}
+              onClick={() => {
+                setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+                setAuthError('');
+              }}
               className="text-xs text-zinc-500 hover:text-white transition-colors uppercase tracking-widest"
             >
               {authMode === 'signin' ? "Create Account" : "Access Existing Account"}
@@ -405,6 +502,7 @@ const App: React.FC = () => {
           setStep(AppStep.DASHBOARD);
         }}
         onAddGoal={startNewGoal}
+        onSignOut={handleSignOut}
       />
     );
   }
@@ -414,9 +512,12 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-black text-white p-6 flex flex-col items-center justify-center max-w-2xl mx-auto animate-in slide-in-from-right duration-500">
         <div className="flex justify-between w-full mb-8">
            <h2 className="text-2xl font-black uppercase tracking-tighter">Step 01: Calibration</h2>
-           {appState.goals.length > 0 && (
-             <button onClick={() => setStep(AppStep.GOALS_LIST)} className="text-xs uppercase text-zinc-500 hover:text-white">Cancel</button>
-           )}
+           <div className="flex gap-4">
+             {appState.goals.length > 0 && (
+               <button onClick={() => setStep(AppStep.GOALS_LIST)} className="text-xs uppercase text-zinc-500 hover:text-white">Cancel</button>
+             )}
+             {/* Sign Out Removed */}
+           </div>
         </div>
         
         <form onSubmit={handleDetailsSubmit} className="w-full space-y-8">
@@ -440,10 +541,26 @@ const App: React.FC = () => {
             />
           </div>
 
+          <div className="space-y-2">
+            <label className="text-sm font-bold uppercase tracking-widest text-zinc-500">Target Date</label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-3 text-zinc-600" size={16} />
+              <input 
+                type="date"
+                required
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-3 pl-10 pr-4 text-white focus:border-white focus:outline-none [color-scheme:dark]"
+                value={inputDate}
+                min={new Date().toISOString().split('T')[0]}
+                onChange={(e) => setInputDate(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-zinc-600">The deadline creates urgency. Choose wisely.</p>
+          </div>
+
           <div className="flex justify-end pt-4">
              <button 
                type="submit" 
-               disabled={!inputRoutine || !inputGoal}
+               disabled={!inputRoutine || !inputGoal || !inputDate}
                className="bg-white text-black px-8 py-3 rounded-lg font-bold uppercase tracking-widest hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
              >
                Next <ChevronRight size={16} />
